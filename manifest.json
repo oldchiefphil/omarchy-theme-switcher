@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.oldchiefphil.theme-switcher",
+  "name": "Theme Switcher",
+  "version": "2.0.0",
+  "author": "oldchiefphil",
+  "license": "MIT",
+  "description": "Automatically switches between a dark and a light theme at sunrise/sunset or on a fixed schedule.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Theme Switcher",
+    "description": "Auto-switch dark/light themes by sun position or fixed times, with a settings panel.",
+    "category": "Appearance",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "enabled": true,
+      "mode": "sun",
+      "darkTheme": "Tokyo Night",
+      "lightTheme": "Catppuccin Latte",
+      "fixedLightTime": "07:00",
+      "fixedDarkTime": "19:00",
+      "sunElevation": 0,
+      "useAutoLocation": true,
+      "locationName": "",
+      "latitude": "",
+      "longitude": ""
+    },
+    "schema": [
+      {
+        "key": "enabled",
+        "type": "boolean",
+        "label": "Automatic switching on/off",
+        "defaultValue": true
+      },
+      {
+        "key": "mode",
+        "type": "string",
+        "label": "Switch mode (sun or fixed)",
+        "defaultValue": "sun"
+      },
+      {
+        "key": "darkTheme",
+        "type": "string",
+        "label": "Dark theme",
+        "defaultValue": "Tokyo Night"
+      },
+      {
+        "key": "lightTheme",
+        "type": "string",
+        "label": "Light theme",
+        "defaultValue": "Catppuccin Latte"
+      },
+      {
+        "key": "fixedLightTime",
+        "type": "string",
+        "label": "Fixed switch-to-light time (HH:MM)",
+        "defaultValue": "07:00"
+      },
+      {
+        "key": "fixedDarkTime",
+        "type": "string",
+        "label": "Fixed switch-to-dark time (HH:MM)",
+        "defaultValue": "19:00"
+      },
+      {
+        "key": "sunElevation",
+        "type": "string",
+        "label": "Sun elevation in degrees (-18 to 18)",
+        "defaultValue": 0
+      },
+      {
+        "key": "useAutoLocation",
+        "type": "boolean",
+        "label": "Use Omarchy location automatically",
+        "defaultValue": true
+      },
+      {
+        "key": "locationName",
+        "type": "string",
+        "label": "Manual location name",
+        "defaultValue": ""
+      },
+      {
+        "key": "latitude",
+        "type": "string",
+        "label": "Manual latitude",
+        "defaultValue": ""
+      },
+      {
+        "key": "longitude",
+        "type": "string",
+        "label": "Manual longitude",
+        "defaultValue": ""
+      }
+    ]
+  }
+}
