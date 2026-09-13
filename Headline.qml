@@ -29,7 +29,7 @@ Item {
   PanelWindow {
     visible: root.opened && root.text !== ""
     anchors { top: true; left: true; right: true }
-    height: Style.space(76)
+    implicitHeight: Style.space(76)
     color: "transparent"
     WlrLayershell.namespace: "omarchy-theme-switcher-headline"
     WlrLayershell.layer: WlrLayer.Overlay

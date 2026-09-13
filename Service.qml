@@ -34,6 +34,14 @@ Item {
 
   property var settings: ({})
   property bool active: true
+  property bool debug: false
+
+  function dbg() {
+    if (!root.debug) return
+    var parts = []
+    for (var i = 0; i < arguments.length; i++) parts.push(String(arguments[i]))
+    console.log("[tsw] " + parts.join(" "))
+  }
 
   function setting(name, fallback) {
     var value = settings ? settings[name] : undefined
@@ -319,8 +327,11 @@ Item {
       "  if [[ $3 == /* && -f $3 ]]; then resolved=\"$3\"; " +
       "  elif [[ -f \"$USER_BGS/$3\" ]]; then resolved=\"$USER_BGS/$3\"; " +
       "  else " +
-      "    dir=$(omarchy theme dir \"$1\" 2>/dev/null || true); " +
-      "    if [[ -n $dir && -f \"$dir/backgrounds/$3\" ]]; then resolved=\"$dir/backgrounds/$3\"; fi; " +
+      "    for db in \"$HOME/.config/omarchy/themes/$2\" " +
+      "             \"${OMARCHY_PATH:-/usr/share/omarchy}/themes/$2\" " +
+      "             \"$(omarchy theme dir \"$1\" 2>/dev/null || true)\"; do " +
+      "      if [[ -n $db && -f \"$db/backgrounds/$3\" ]]; then resolved=\"$db/backgrounds/$3\"; break; fi; " +
+      "    done; " +
       "  fi; " +
       "fi; " +
       "if [[ -n $resolved ]]; then " +
@@ -362,6 +373,8 @@ Item {
 
   function onCurrentTheme(raw) {
     root.currentTheme = String(raw || "").replace(/^\s+|\s+$/g, "")
+    root.dbg("onCurrentTheme current=", root.currentTheme,
+      "purpose=", root._probePurpose, "target=", root._probeTheme)
     var purpose = root._probePurpose
     var target = root._probeTheme
     root._probePurpose = ""
@@ -396,6 +409,7 @@ Item {
   // the current theme first so the wallpaper snapshot stays accurate.
   function doApply(themeName, reason) {
     if (String(themeName || "") === "") return
+    root.dbg("doApply target=", themeName, "reason=", reason)
     root._swTarget = String(themeName)
     root._swReason = String(reason || "Switch")
     probeCurrent("preapply", "")
@@ -405,6 +419,7 @@ Item {
   // switch, then remember both themes' wallpapers.
   function startSwitch(target, reason, fromTheme) {
     if (String(target || "") === "") return
+    root.dbg("startSwitch target=", target, "reason=", reason, "from=", fromTheme)
     root._swTarget = String(target)
     root._swReason = String(reason || "Switch")
     root._swCurrent = String(fromTheme || "")
@@ -416,6 +431,7 @@ Item {
     var target = root._swTarget
     var reason = root._swReason
     var fromTheme = root._swCurrent
+    root.dbg("onBgForSwitch bg=", rawBg, "target=", target, "reason=", reason, "from=", fromTheme, "current=", root.currentTheme)
     root._swTarget = ""
     root._swReason = ""
     root._swCurrent = ""
@@ -431,6 +447,8 @@ Item {
     }
     // 3. Stage remembered wallpaper + apply the theme in one detached call.
     root.lastAction = reason + ": " + target
+    root.dbg("doSwitch ->", target, "slug=", Model.slugForTheme(target),
+      "remembered=", bgMap[Model.normalizeThemeName(target)] || "")
     doSwitch(target, reason, fromTheme)
     // A manual switch is the user's word against the schedule: hold it
     // until the next scheduled event instead of reconciling it away.
@@ -568,7 +586,9 @@ Item {
       waitForEnd: true
       onStreamFinished: root.onBgForSwitch(text)
     }
-    onExited: function() {
+    onExited: function(exitCode, exitStatus) {
+      root.dbg("bgProc exited code=", exitCode, "status=", exitStatus,
+        "queued=", root._bgQueued)
       if (root._bgQueued) {
         root._bgQueued = false
         root.probeBg()
@@ -578,7 +598,9 @@ Item {
 
   Process {
     id: switchProc
-    onExited: function() {
+    onExited: function(exitCode, exitStatus) {
+      root.dbg("switchProc exited code=", exitCode, "status=", exitStatus,
+        "running=", running)
       var queued = root._switchQueued
       root._switchQueued = null
       if (queued && queued.target)
