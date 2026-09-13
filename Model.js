@@ -25,6 +25,27 @@ function parseLocationFile(raw) {
   }
 }
 
+// First result of an open-meteo geocoding response (the weather panel's
+// location picker uses the same API) -> { name, latitude, longitude }.
+function parseGeoFirst(raw) {
+  var unset = { name: "", latitude: null, longitude: null };
+  try {
+    var data = JSON.parse(String(raw || ""));
+    var result = data && data.results && data.results[0] ? data.results[0] : null;
+    if (!result) return unset;
+    var latitude = parseFloat(result.latitude);
+    var longitude = parseFloat(result.longitude);
+    if (isNaN(latitude) || isNaN(longitude)) return unset;
+    return {
+      name: String(result.name || ""),
+      latitude: latitude,
+      longitude: longitude
+    };
+  } catch (e) {
+    return unset;
+  }
+}
+
 function parseCoord(value) {
   var n = parseFloat(String(value === undefined || value === null ? "" : value));
   return isNaN(n) ? null : n;
@@ -223,6 +244,13 @@ if (typeof module !== "undefined" && require.main === module) {
     { name: "Berlin", latitude: 52.5, longitude: 13.4 });
   assert.deepStrictEqual(parseLocationFile(""), { name: "", latitude: null, longitude: null });
   assert.deepStrictEqual(parseLocationFile('{"name":"X"}'), { name: "X", latitude: null, longitude: null });
+
+  assert.deepStrictEqual(parseGeoFirst(""),
+    { name: "", latitude: null, longitude: null });
+  assert.deepStrictEqual(parseGeoFirst('{"results":[{"name":"Bochum","latitude":51.48,"longitude":7.22}]}'),
+    { name: "Bochum", latitude: 51.48, longitude: 7.22 });
+  assert.deepStrictEqual(parseGeoFirst('{"results":[]}'),
+    { name: "", latitude: null, longitude: null });
 
   assert.strictEqual(parseTimeToMinutes("07:00"), 420);
   assert.strictEqual(parseTimeToMinutes("7:5"), 425);

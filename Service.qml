@@ -108,6 +108,14 @@ Item {
   // ---- Location: Omarchy's own weather.json or manual override ----
   property var autoLocation: ({ name: "", latitude: null, longitude: null })
 
+  // IP auto-detect resolution (empty weather.json): the city the network
+  // routed us to, resolved from wttr.in's nearest_area like the weather
+  // panel does. Kept so a cleared weather.json doesn't drop sun mode.
+  property var ipLocation: ({ name: "", latitude: null, longitude: null })
+  property var ipResolvedAt: 0
+  property bool _ipLocRunning: false
+
+  readonly property bool hasIpCoords: Model.validCoords(ipLocation.latitude, ipLocation.longitude)
   readonly property bool hasAutoCoords: Model.validCoords(autoLocation.latitude, autoLocation.longitude)
   readonly property bool hasManualCoords: Model.validCoords(manualLatitude, manualLongitude)
   readonly property var effectiveCoords: {
@@ -116,14 +124,16 @@ Item {
     if (!useAutoLocation && hasManualCoords)
       return { latitude: manualLatitude, longitude: manualLongitude }
     // One-way fallback so sun mode degrades gracefully instead of dying:
-    // prefer whichever source actually has coordinates.
+    // prefer whichever source actually has coordinates, then the IP-detect.
     if (hasAutoCoords) return { latitude: autoLocation.latitude, longitude: autoLocation.longitude }
     if (hasManualCoords) return { latitude: manualLatitude, longitude: manualLongitude }
+    if (hasIpCoords) return { latitude: ipLocation.latitude, longitude: ipLocation.longitude }
     return null
   }
   readonly property string locationLabel: {
     if (useAutoLocation) {
       if (hasAutoCoords) return autoLocation.name !== "" ? autoLocation.name : "Omarchy location"
+      if (hasIpCoords) return ipLocation.name !== "" ? ipLocation.name + " (IP)" : "IP auto-detect"
       return "IP auto-detect"
     }
     if (hasManualCoords) return locationName !== "" ? locationName : "Custom coordinates"
@@ -233,6 +243,36 @@ Item {
       root.autoLocation = parsed
       locationSettleTimer.restart()
     }
+    // No stored coords: IP auto-detect. Fall back to resolving the network
+    // location so sun mode keeps real sunrise/sunset. Throttled to hourly
+    // by resolveIpLocation itself; on failure the fixed-time fallback holds.
+    if (!Model.validCoords(parsed.latitude, parsed.longitude))
+      root.resolveIpLocation()
+  }
+
+  // Resolve the auto-detected location (wttr.in nearest_area, same source
+  // as the weather panel). Only runs in sun mode without stored coords and
+  // at most once an hour; no network use otherwise. On failure the
+  // fixed-time fallback holds until the next hourly attempt.
+  function resolveIpLocation() {
+    if (mode !== "sun" || !useAutoLocation || root._ipLocRunning) return
+    if (root.hasAutoCoords) return
+    var elapsed = Date.now() - Number(root.ipResolvedAt || 0)
+    if (elapsed >= 0 && elapsed < 3300000) return
+    root._ipLocRunning = true
+    // Timestamp the attempt, not just the success, so failures are also
+    // throttled to one lookup per hour instead of one per minute poll.
+    root.ipResolvedAt = Date.now()
+    ipLocProc.running = true
+  }
+
+  function onIpLocation(raw) {
+    root.dbg("ipLocation resolved: ", String(raw || "").length, "bytes")
+    var parsed = Model.parseGeoFirst(raw)
+    if (!Model.validCoords(parsed.latitude, parsed.longitude)) return
+    root.ipLocation = parsed
+    root.ipResolvedAt = Date.now()
+    locationSettleTimer.restart()
   }
 
   function probeStatus() {
@@ -518,6 +558,8 @@ Item {
   Component.onCompleted: {
     bgMapFile.reload()
     refresh()
+    // No stored coords? Resolve the network location for sun mode.
+    Qt.callLater(root.resolveIpLocation)
   }
 
   Timer {
@@ -572,7 +614,8 @@ Item {
     id: locationPollTimer
     interval: 60000
     repeat: true
-    onTriggered: locationProbe.exec()
+    running: true
+    onTriggered: locationProbe.running = true
   }
 
   Process {
@@ -581,16 +624,39 @@ Item {
       "f=\"${HOME}/.local/state/omarchy/settings/weather.json\"; if test -f \"$f\"; then cat \"$f\"; else echo \"__MISSING__\"; fi"]
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.onLocationProbe(text())
+      onStreamFinished: root.onLocationProbe(text)
+    }
+  }
+
+  // IP auto-detect resolution, kept to compact outputs (the large wttr j1
+  // body never reaches a StdioCollector's streamFinished): resolve the
+  // network city like Omarchy does, then geocode it via the weather panel's
+  // own API. Sun mode then works without a stored location.
+  Process {
+    id: ipLocProc
+    command: ["bash", "-c",
+      "city=$(omarchy-weather-location 2>/dev/null); " +
+      "test -n \"$city\" || { echo \"\"; exit 0; }; " +
+      "query=$(printf '%s' \"$city\" | jq -sRr @uri); " +
+      "curl -fsS --max-time 5 \"https://geocoding-api.open-meteo.com/v1/search?name=${query}&count=1&language=en&format=json\""]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.onIpLocation(text)
+    }
+    onExited: function() {
+      root.dbg("ipLocProc exited")
+      root._ipLocRunning = false
     }
   }
 
   SystemClock {
     id: dayClock
     precision: SystemClock.Hours
-    // Hourly heartbeat: rolls the plan over at midnight and keeps the
-    // pill/panel labels fresh. Never reconciles while an override holds.
+    // Hourly heartbeat: rolls the plan over at midnight, keeps the
+    // pill/panel labels fresh and re-resolves the IP location when no
+    // coordinates are stored. Never reconciles while an override holds.
     onDateChanged: {
+      root.resolveIpLocation()
       if (root.overridden) root.refreshQuiet()
       else refreshDebounce.restart()
     }
