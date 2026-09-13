@@ -608,11 +608,12 @@ Item {
   // Quickshell FileView watchers die when the watched file is deleted, and
   // reload() on a missing file (or one recreated with identical content)
   // emits nothing, so a cleared weather.json would stick. Read the file
-  // directly once a minute instead: the probe cat's it and compares the
-  // parsed location against the current one, converging within 60s.
+  // directly every few seconds instead: the probe cat's it and compares the
+  // parsed location against the current one, converging within ~10s.
+  // Cheap: a single cat of a tiny file through a short-lived process.
   Timer {
     id: locationPollTimer
-    interval: 60000
+    interval: 10000
     repeat: true
     running: true
     onTriggered: locationProbe.running = true
