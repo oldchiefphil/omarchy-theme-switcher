@@ -201,6 +201,10 @@ Item {
   // active theme with the schedule. Used on startup and settings changes.
   function refresh() {
     root.overrideUntil = new Date(NaN)
+    // Re-read the location file on every refresh so a created/deleted
+    // weather.json (FileView watchers do not survive deletion) still
+    // reach the plan; onLoaded/onLoadFailed then re-plan via the timer.
+    locationFile.reload()
     var plan = refreshPlan()
     if (plan && mode !== "manual" && plan.desired !== "")
       probeCurrent("reconcile", themeNameFor(plan.desired))
@@ -212,6 +216,23 @@ Item {
   function refreshQuiet() {
     refreshPlan()
     probeStatus()
+  }
+
+  // Poll callback: parses the cat'ed weather.json (or the missing sentinel)
+  // and only re-plans when the effective location actually changed, so the
+  // minute timer never causes churn.
+  function onLocationProbe(raw) {
+    var text = String(raw || "").replace(/^\s+|\s+$/g, "")
+    var parsed = text === "__MISSING__"
+      ? Model.parseLocationFile("")
+      : Model.parseLocationFile(text)
+    var key = JSON.stringify([parsed.name, parsed.latitude, parsed.longitude])
+    var cur = JSON.stringify([root.autoLocation.name,
+      root.autoLocation.latitude, root.autoLocation.longitude])
+    if (key !== cur) {
+      root.autoLocation = parsed
+      locationSettleTimer.restart()
+    }
   }
 
   function probeStatus() {
@@ -495,7 +516,6 @@ Item {
   }
 
   Component.onCompleted: {
-    locationFile.reload()
     bgMapFile.reload()
     refresh()
   }
@@ -527,6 +547,44 @@ Item {
     }
   }
 
+  // The location file arrived or disappeared: re-plan and reconcile with
+  // the fresh coordinates. Never calls refresh() itself, so there is no
+  // reload loop (refresh() re-reads the file, which fires this again).
+  Timer {
+    id: locationSettleTimer
+    interval: 200
+    repeat: false
+    onTriggered: {
+      refreshPlan()
+      if (mode !== "manual" && root.desiredNow !== "") {
+        if (root.overridden) root.refreshQuiet()
+        else probeCurrent("reconcile", root.themeNameFor(root.desiredNow))
+      }
+    }
+  }
+
+  // Quickshell FileView watchers die when the watched file is deleted, and
+  // reload() on a missing file (or one recreated with identical content)
+  // emits nothing, so a cleared weather.json would stick. Read the file
+  // directly once a minute instead: the probe cat's it and compares the
+  // parsed location against the current one, converging within 60s.
+  Timer {
+    id: locationPollTimer
+    interval: 60000
+    repeat: true
+    onTriggered: locationProbe.exec()
+  }
+
+  Process {
+    id: locationProbe
+    command: ["bash", "-c",
+      "f=\"${HOME}/.local/state/omarchy/settings/weather.json\"; if test -f \"$f\"; then cat \"$f\"; else echo \"__MISSING__\"; fi"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.onLocationProbe(text())
+    }
+  }
+
   SystemClock {
     id: dayClock
     precision: SystemClock.Hours
@@ -544,11 +602,11 @@ Item {
     watchChanges: true
     onLoaded: {
       root.autoLocation = Model.parseLocationFile(text())
-      root.refresh()
+      locationSettleTimer.restart()
     }
     onLoadFailed: {
       root.autoLocation = Model.parseLocationFile("")
-      root.refresh()
+      locationSettleTimer.restart()
     }
   }
 
