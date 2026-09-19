@@ -58,13 +58,33 @@ function validCoords(latitude, longitude) {
 }
 
 // "HH:MM" (24h) -> minutes after midnight, or null when invalid.
+// A colon is optional: bare digits are read like a typed clock — 1-2
+// digits are the hour (12 -> 12:00), 3 digits are hour + minute
+// (755 -> 07:55), 4 digits are HHMM (1200 -> 12:00).
 function parseTimeToMinutes(text) {
   var m = /^\s*(\d{1,2})\s*:\s*(\d{1,2})\s*$/.exec(String(text || ""));
-  if (!m) return null;
-  var h = parseInt(m[1], 10);
-  var min = parseInt(m[2], 10);
-  if (h < 0 || h > 23 || min < 0 || min > 59) return null;
-  return h * 60 + min;
+  if (m) {
+    var h = parseInt(m[1], 10);
+    var min = parseInt(m[2], 10);
+    if (h < 0 || h > 23 || min < 0 || min > 59) return null;
+    return h * 60 + min;
+  }
+  var d = /^\s*(\d{1,4})\s*$/.exec(String(text || ""));
+  if (!d) return null;
+  var digits = d[1];
+  var hh, mm;
+  if (digits.length <= 2) {
+    hh = parseInt(digits, 10);
+    mm = 0;
+  } else if (digits.length === 3) {
+    hh = parseInt(digits.charAt(0), 10);
+    mm = parseInt(digits.slice(1), 10);
+  } else {
+    hh = parseInt(digits.slice(0, 2), 10);
+    mm = parseInt(digits.slice(2), 10);
+  }
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+  return hh * 60 + mm;
 }
 
 function minutesToTimeString(minutes) {
@@ -256,6 +276,13 @@ if (typeof module !== "undefined" && require.main === module) {
   assert.strictEqual(parseTimeToMinutes("7:5"), 425);
   assert.strictEqual(parseTimeToMinutes("24:00"), null);
   assert.strictEqual(parseTimeToMinutes("abc"), null);
+  assert.strictEqual(parseTimeToMinutes("1200"), 720, "bare 4 digits are HHMM");
+  assert.strictEqual(parseTimeToMinutes("755"), 475, "3 digits are hour + minute");
+  assert.strictEqual(parseTimeToMinutes("12"), 720, "2 digits are the hour");
+  assert.strictEqual(parseTimeToMinutes("5"), 300, "1 digit is the hour");
+  assert.strictEqual(parseTimeToMinutes("2400"), null, "hour 24 invalid");
+  assert.strictEqual(parseTimeToMinutes("1260"), null, "minute 60 invalid");
+  assert.strictEqual(parseTimeToMinutes("12:00"), 720, "colon form still works");
   assert.strictEqual(minutesToTimeString(420), "07:00");
   assert.strictEqual(normalizeThemeName("Tokyo-Night"), "tokyo night");
   assert.strictEqual(slugForTheme("Tokyo Night"), "tokyo-night");

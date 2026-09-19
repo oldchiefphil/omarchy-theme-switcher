@@ -66,6 +66,11 @@ Panel {
   property var previewFiles: ({})
   // Slot ("dark"/"light") currently being picked in the stock gallery.
   property string pickingSlot: ""
+  // A time field the user has deliberately cleared stays blank (shows the
+  // placeholder) instead of silently snapping back to the stored/default
+  // value on the next re-sync.
+  property bool lightTimeBlanked: false
+  property bool darkTimeBlanked: false
 
   readonly property string pickerScript: String(Qt.resolvedUrl("pick-theme.sh")).replace(/^file:\/\//, "")
 
@@ -135,13 +140,56 @@ Panel {
     syncFields()
   }
 
+  function timeDigits(key) {
+    return String(root.settings[key] || "").replace(/[^0-9]/g, "")
+  }
+
+  // Numpad keys translate to digits regardless of the NumLock state: with
+  // NumLock on they arrive as Key_0..9, with NumLock off they arrive as the
+  // classic navigation keys (End/Down/PageDown/Left/Right/Home/Up/PageUp/
+  // Insert, Clear) that still mean "type that digit" in a digits-only field.
+  function keypadDigit(ev) {
+    if (!(ev.modifiers & Qt.KeypadModifier)) return -1
+    switch (ev.key) {
+      case Qt.Key_Home: return 7
+      case Qt.Key_Up: return 8
+      case Qt.Key_PageUp: return 9
+      case Qt.Key_Left: return 4
+      case Qt.Key_Clear: return 5
+      case Qt.Key_Right: return 6
+      case Qt.Key_End: return 1
+      case Qt.Key_Down: return 2
+      case Qt.Key_PageDown: return 3
+      case Qt.Key_Insert: return 0
+    }
+    return -1
+  }
+
+  function insertTimeDigit(field, digit) {
+    var start = field.selectionStart
+    var end = field.selectionEnd
+    var pos = end > start ? start : field.cursorPosition
+    if (end > start) field.remove(start, end)
+    field.insert(pos, String(digit))
+    field.cursorPosition = pos + 1
+  }
+  function removeSetting(key) {
+    var entry = { id: root.moduleName }
+    for (var existing in root.settings) if (existing !== "id" && existing !== key) entry[existing] = root.settings[existing]
+    root.settings = entry
+    if (root.hostWidget && "settings" in root.hostWidget) root.hostWidget.settings = entry
+    if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
+      root.bar.shell.updateEntryInline(root.moduleName, entry)
+    syncFields()
+  }
+
   // Text inputs are assigned (never bound) so typing cannot fight the
   // settings round-trip; syncFields runs on open, on settings change,
   // and after every commit.
   function syncFields() {
-    fixedLightField.text = String(setting("fixedLightTime", "07:00"))
-    fixedDarkField.text = String(setting("fixedDarkTime", "19:00"))
-    elevationField.text = String(setting("sunElevation", 0))
+    if (!root.lightTimeBlanked) fixedLightField.text = root.timeDigits("fixedLightTime")
+    if (!root.darkTimeBlanked) fixedDarkField.text = root.timeDigits("fixedDarkTime")
+    elevationField.value = Math.round(effElevation)
     cityField.text = String(setting("locationName", "") || "")
     latitudeField.text = String(setting("latitude", "") || "")
     longitudeField.text = String(setting("longitude", "") || "")
@@ -150,6 +198,8 @@ Panel {
   function commitTime(field, key) {
     var minutes = Model.parseTimeToMinutes(field.text)
     if (minutes === null) {
+      // Non-empty but invalid input: snap back to the stored value. Empty
+      // input never reaches this branch (blank is a deliberate state).
       syncFields()
       return
     }
@@ -157,17 +207,9 @@ Panel {
     var values = {}
     values[key] = normalized
     persistSettings(values)
-  }
-
-  function commitElevation() {
-    var v = parseFloat(String(elevationField.text || "").replace(",", "."))
-    if (!isFinite(v)) {
-      syncFields()
-      return
-    }
-    if (v < -18) v = -18
-    if (v > 18) v = 18
-    persistSettings({ sunElevation: Math.round(v * 10) / 10 })
+    // The blanket re-sync skips a blanked/empty field; show the raw digits
+    // right here so the field never flips back to whatever was typed.
+    field.text = normalized.replace(":", "")
   }
 
   function commitLocation() {
@@ -509,6 +551,12 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      // Inline editors own the keys while focused (same pattern as the
+      // built-in panels): typing digits into the time fields or the
+      // elevation spinner must not double-drive the panel shortcuts.
+      blocked: fixedLightField.activeFocus
+        || fixedDarkField.activeFocus
+        || (elevationField.field ? elevationField.field.activeFocus : false)
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
@@ -649,13 +697,52 @@ Panel {
             TextField {
               id: fixedLightField
               width: parent.width
-              placeholderText: "07:00"
+              Keys.onPressed: function(ev) {
+                if (ev.modifiers & Qt.ControlModifier) return
+                var digit = -1
+                if (ev.key >= Qt.Key_0 && ev.key <= Qt.Key_9) digit = ev.key - Qt.Key_0
+                if (digit < 0) digit = root.keypadDigit(ev)
+                if (digit >= 0 && !(ev.text && ev.text.length > 0)) {
+                  root.insertTimeDigit(fixedLightField, digit)
+                  ev.accepted = true
+                }
+              }
               foreground: root.contentForeground
               font.family: root.contentFontFamily
-              inputMethodHints: Qt.ImhTime
+              // A plain digit validator instead of Qt.ImhDigitsOnly: the
+              // input-method hint can drop numeric-keypad digits (they carry
+              // the KeypadModifier), the validator cannot.
+              validator: RegularExpressionValidator { regularExpression: /^[\d:]{0,5}$/ }
+              inputMethodHints: Qt.ImhNoPredictiveText
+              onTextChanged: {
+                var digits = String(fixedLightField.text || "").replace(/[^0-9]/g, "")
+                if (digits.length > 4) {
+                  // Typing over an existing value starts a fresh entry: keep
+                  // only the just-typed digit so the field can commit again.
+                  fixedLightField.text = digits.slice(-1)
+                  return
+                }
+                if (digits === "") {
+                  root.lightTimeBlanked = true
+                  root.removeSetting("fixedLightTime")
+                  return
+                }
+                // 4 digits complete a time: apply on the spot, no need to
+                // confirm (re-entrant sync shows the raw digits again; the
+                // guard stops the loop).
+                if (!/^\d{4}$/.test(digits)) return
+                if (fixedLightField.text === root.timeDigits("fixedLightTime")) return
+                root.commitTime(fixedLightField, "fixedLightTime")
+              }
               onAccepted: root.commitTime(fixedLightField, "fixedLightTime")
               onEditingFinished: {
-                if (fixedLightField.text !== String(root.setting("fixedLightTime", "07:00")))
+                var dt = String(fixedLightField.text || "").replace(/[^0-9]/g, "")
+                if (dt === "") {
+                  root.lightTimeBlanked = true
+                  root.removeSetting("fixedLightTime")
+                  return
+                }
+                if (fixedLightField.text !== root.timeDigits("fixedLightTime"))
                   root.commitTime(fixedLightField, "fixedLightTime")
               }
             }
@@ -676,27 +763,48 @@ Panel {
             TextField {
               id: fixedDarkField
               width: parent.width
-              placeholderText: "19:00"
+              Keys.onPressed: function(ev) {
+                if (ev.modifiers & Qt.ControlModifier) return
+                var digit = -1
+                if (ev.key >= Qt.Key_0 && ev.key <= Qt.Key_9) digit = ev.key - Qt.Key_0
+                if (digit < 0) digit = root.keypadDigit(ev)
+                if (digit >= 0 && !(ev.text && ev.text.length > 0)) {
+                  root.insertTimeDigit(fixedDarkField, digit)
+                  ev.accepted = true
+                }
+              }
               foreground: root.contentForeground
               font.family: root.contentFontFamily
-              inputMethodHints: Qt.ImhTime
+              validator: RegularExpressionValidator { regularExpression: /^[\d:]{0,5}$/ }
+              inputMethodHints: Qt.ImhNoPredictiveText
+              onTextChanged: {
+                var digits = String(fixedDarkField.text || "").replace(/[^0-9]/g, "")
+                if (digits.length > 4) {
+                  fixedDarkField.text = digits.slice(-1)
+                  return
+                }
+                if (digits === "") {
+                  root.darkTimeBlanked = true
+                  root.removeSetting("fixedDarkTime")
+                  return
+                }
+                if (!/^\d{4}$/.test(digits)) return
+                if (fixedDarkField.text === root.timeDigits("fixedDarkTime")) return
+                root.commitTime(fixedDarkField, "fixedDarkTime")
+              }
               onAccepted: root.commitTime(fixedDarkField, "fixedDarkTime")
               onEditingFinished: {
-                if (fixedDarkField.text !== String(root.setting("fixedDarkTime", "19:00")))
+                var dt = String(fixedDarkField.text || "").replace(/[^0-9]/g, "")
+                if (dt === "") {
+                  root.darkTimeBlanked = true
+                  root.removeSetting("fixedDarkTime")
+                  return
+                }
+                if (fixedDarkField.text !== root.timeDigits("fixedDarkTime"))
                   root.commitTime(fixedDarkField, "fixedDarkTime")
               }
             }
           }
-        }
-
-        Text {
-          visible: root.effMode === "fixed"
-          width: parent.width
-          textFormat: Text.PlainText
-          text: "Press Enter to apply."
-          color: Qt.darker(root.contentForeground, 1.6)
-          font.family: root.contentFontFamily
-          font.pixelSize: Style.font.bodySmall
         }
 
         Column {
@@ -704,35 +812,19 @@ Panel {
           width: parent.width
           spacing: Style.space(4)
 
-          Text {
-            textFormat: Text.PlainText
-            text: "Switch at sun elevation (°)"
-            color: Qt.darker(root.contentForeground, 1.4)
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.bodySmall
-          }
-
-          TextField {
+          NumberField {
             id: elevationField
             width: parent.width
-            placeholderText: "0"
+            label: "Switch at sun elevation (°)"
+            value: Math.round(root.effElevation)
+            from: -18
+            to: 18
+            stepSize: 1
             foreground: root.contentForeground
-            font.family: root.contentFontFamily
-            inputMethodHints: Qt.ImhFormattedNumbersOnly
-            onAccepted: root.commitElevation()
-            onEditingFinished: {
-              if (parseFloat(String(elevationField.text || "").replace(",", ".")) !== root.effElevation)
-                root.commitElevation()
-            }
-          }
-
-          Text {
-            width: parent.width
-            textFormat: Text.PlainText
-            text: "Press Enter to apply."
-            color: Qt.darker(root.contentForeground, 1.6)
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.bodySmall
+            fontFamily: root.contentFontFamily
+            fontSize: Style.font.body
+            fieldWidth: Style.space(160)
+            onModified: function(v) { root.persistSettings({ sunElevation: v }) }
           }
 
           Text {
