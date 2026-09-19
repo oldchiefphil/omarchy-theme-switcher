@@ -308,19 +308,19 @@ Panel {
       + " at " + Model.formatTime(switcher.nextAt)
   }
 
-  // "Use Omarchy location", the resolved city, and a map pin when the
-  // location came from IP geo-detection (never a stored file).
-  function locationRowText() {
-    var base = "Use Omarchy location"
-    if (!switcher) return base
-    var label = String(switcher.locationLabel || "")
-    if (label === "" || label === "IP auto-detect") return base
+  // Resolved Omarchy location shown under the "Use Omarchy location" toggle
+  // while it is ON: the city Omarchy resolved (with a map pin when it came
+  // from IP geo-detection — never a stored file).
+  function omarchyLocationText() {
+    var label = switcher ? String(switcher.locationLabel || "") : ""
+    if (label === "") return "Omarchy location"
+    if (label === "IP auto-detect") return "Omarchy location · IP auto-detect"
+    if (label === "Omarchy location") return "Omarchy location"
     var ipMarker = " (IP)"
     var ip = label.indexOf(ipMarker) >= 0
     var name = ip ? label.slice(0, label.indexOf(ipMarker)).trim() : label
-    if (name === "") return base
-    if (ip) return base + " · " + name + "  \uf041"
-    return base + " · " + name
+    if (name === "") return "Omarchy location"
+    return "Omarchy location · " + name + (ip ? "  \uf041" : "")
   }
 
   function scheduleSummaryText() {
@@ -689,6 +689,16 @@ Panel {
           }
         }
 
+        Text {
+          visible: root.effMode === "fixed"
+          width: parent.width
+          textFormat: Text.PlainText
+          text: "Press Enter to apply."
+          color: Qt.darker(root.contentForeground, 1.6)
+          font.family: root.contentFontFamily
+          font.pixelSize: Style.font.bodySmall
+        }
+
         Column {
           visible: root.effMode === "sun"
           width: parent.width
@@ -714,6 +724,15 @@ Panel {
               if (parseFloat(String(elevationField.text || "").replace(",", ".")) !== root.effElevation)
                 root.commitElevation()
             }
+          }
+
+          Text {
+            width: parent.width
+            textFormat: Text.PlainText
+            text: "Press Enter to apply."
+            color: Qt.darker(root.contentForeground, 1.6)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.bodySmall
           }
 
           Text {
@@ -842,7 +861,7 @@ Panel {
             anchors.verticalCenter: parent.verticalCenter
             wrapMode: Text.WordWrap
             textFormat: Text.PlainText
-            text: root.locationRowText()
+            text: "Use Omarchy location"
             color: root.contentForeground
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.body
@@ -857,10 +876,29 @@ Panel {
           }
         }
 
+        Text {
+          visible: root.effAutoLocation
+          width: parent.width
+          wrapMode: Text.WordWrap
+          textFormat: Text.PlainText
+          text: root.omarchyLocationText()
+          color: Qt.darker(root.contentForeground, 1.4)
+          font.family: root.contentFontFamily
+          font.pixelSize: Style.font.bodySmall
+        }
+
         Column {
           visible: !root.effAutoLocation
           width: parent.width
           spacing: Style.space(8)
+
+          Text {
+            textFormat: Text.PlainText
+            text: "Custom location"
+            color: Qt.darker(root.contentForeground, 1.4)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.body
+          }
 
           TextField {
             id: cityField
